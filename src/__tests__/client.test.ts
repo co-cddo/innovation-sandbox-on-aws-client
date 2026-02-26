@@ -2,7 +2,13 @@ import { jest } from "@jest/globals"
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager"
 import { mockClient } from "aws-sdk-client-mock"
 import { createISBClient, constructLeaseId } from "../index.js"
-import type { ISBLeaseRecord, ISBAccountRecord, ISBTemplateRecord, JSendResponse } from "../index.js"
+import type {
+  ISBLeaseRecord,
+  ISBAccountRecord,
+  ISBTemplateRecord,
+  ISBReviewLeaseResponse,
+  JSendResponse,
+} from "../index.js"
 
 // Create mock for Secrets Manager client
 const secretsMock = mockClient(SecretsManagerClient)
@@ -903,6 +909,658 @@ describe("ISB Templates Client", () => {
 
       expect(result).toBeNull()
       expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+})
+
+// =============================================================================
+// reviewLease Tests
+// =============================================================================
+
+describe("ISB Client - reviewLease", () => {
+  const testCorrelationId = "test-review-001"
+  const testLeaseId = constructLeaseId("user@example.gov.uk", "550e8400-e29b-41d4-a716-446655440000")
+  const testConfig = {
+    serviceIdentity: TEST_SERVICE_IDENTITY,
+    apiBaseUrl: TEST_API_BASE_URL,
+    jwtSecretPath: TEST_JWT_SECRET_PATH,
+  }
+
+  let client: ReturnType<typeof createISBClient>
+
+  beforeEach(() => {
+    commonBeforeEach()
+    client = createISBClient(testConfig)
+  })
+
+  describe("reviewLease - Success cases", () => {
+    it("should return success result when approving a lease", async () => {
+      const mockResponseData: ISBReviewLeaseResponse = {
+        leaseId: testLeaseId,
+        status: "Approved",
+      }
+
+      const mockResponse: JSendResponse<ISBReviewLeaseResponse> = {
+        status: "success",
+        data: mockResponseData,
+      }
+
+      mockFetch.mockResolvedValue(createAPIResponse(200, mockResponse))
+
+      const result = await client.reviewLease(
+        testLeaseId,
+        { action: "Approve", approverEmail: "admin@example.gov.uk" },
+        testCorrelationId,
+      )
+
+      expect(result).toEqual({ success: true, data: mockResponseData, statusCode: 200 })
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(url).toBe(`${TEST_API_BASE_URL}/leases/${encodeURIComponent(testLeaseId)}/review`)
+      expect((options as RequestInit).method).toBe("POST")
+      expect(((options as RequestInit).headers as Record<string, string>)["Authorization"]).toMatch(/^Bearer /)
+      expect(((options as RequestInit).headers as Record<string, string>)["X-Correlation-Id"]).toBe(testCorrelationId)
+
+      const body = JSON.parse((options as RequestInit).body as string)
+      expect(body).toEqual({ action: "Approve", approverEmail: "admin@example.gov.uk" })
+    })
+
+    it("should return success result when denying a lease", async () => {
+      const mockResponseData: ISBReviewLeaseResponse = {
+        leaseId: testLeaseId,
+        status: "Denied",
+      }
+
+      const mockResponse: JSendResponse<ISBReviewLeaseResponse> = {
+        status: "success",
+        data: mockResponseData,
+      }
+
+      mockFetch.mockResolvedValue(createAPIResponse(200, mockResponse))
+
+      const result = await client.reviewLease(testLeaseId, { action: "Deny" }, testCorrelationId)
+
+      expect(result).toEqual({ success: true, data: mockResponseData, statusCode: 200 })
+    })
+  })
+
+  describe("reviewLease - Error handling", () => {
+    it("should return failure result for 400 response", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(400, { status: "fail", message: "Lease already reviewed" }),
+      )
+
+      const result = await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Lease already reviewed")
+        expect(result.statusCode).toBe(400)
+      }
+    })
+
+    it("should return failure result for 404 response", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(404, { status: "fail", message: "Lease not found" }),
+      )
+
+      const result = await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Lease not found")
+        expect(result.statusCode).toBe(404)
+      }
+    })
+
+    it("should return failure result for 500 response", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(500, { status: "error", message: "Internal server error" }),
+      )
+
+      const result = await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Internal server error")
+        expect(result.statusCode).toBe(500)
+      }
+    })
+
+    it("should return failure result for network error", async () => {
+      mockFetch.mockRejectedValue(new Error("Network error"))
+
+      const result = await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Network error")
+        expect(result.statusCode).toBe(0)
+      }
+    })
+
+    it("should return failure result for timeout error", async () => {
+      mockFetch.mockRejectedValue(new DOMException("The operation was aborted", "AbortError"))
+
+      const result = await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("The operation was aborted")
+        expect(result.statusCode).toBe(0)
+      }
+    })
+
+    it("should return failure result when API is not configured", async () => {
+      const unconfiguredClient = createISBClient({ serviceIdentity: TEST_SERVICE_IDENTITY })
+      const result = await unconfiguredClient.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("ISB API not configured")
+        expect(result.statusCode).toBe(0)
+      }
+    })
+
+    it("should invalidate secret cache on 401", async () => {
+      const mockSuccess: JSendResponse<ISBReviewLeaseResponse> = {
+        status: "success",
+        data: { leaseId: testLeaseId, status: "Approved" },
+      }
+
+      // First call succeeds
+      mockFetch.mockResolvedValueOnce(createAPIResponse(200, mockSuccess))
+      await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+      expect(secretsMock.calls()).toHaveLength(1)
+
+      // Second call returns 401
+      mockFetch.mockResolvedValueOnce(createAPIResponse(401, { status: "fail", message: "Unauthorized" }))
+      await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      // Third call should re-fetch secret
+      mockFetch.mockResolvedValueOnce(createAPIResponse(200, mockSuccess))
+      await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(secretsMock.calls()).toHaveLength(2)
+    })
+  })
+
+  describe("reviewLease - Input validation", () => {
+    it("should return failure for empty leaseId", async () => {
+      const result = await client.reviewLease("", { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Invalid leaseId")
+      }
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it("should return failure for whitespace-only leaseId", async () => {
+      const result = await client.reviewLease("   ", { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Invalid leaseId")
+      }
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it("should return failure for missing action", async () => {
+      const result = await client.reviewLease(
+        testLeaseId,
+        {} as { action: "Approve" },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Invalid review action")
+      }
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("reviewLease - JSend response handling", () => {
+    it("should return failure for JSend fail status", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(200, { status: "fail", message: "Validation failed" }),
+      )
+
+      const result = await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Validation failed")
+      }
+    })
+
+    it("should return failure for JSend error status", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(200, { status: "error", message: "Processing error" }),
+      )
+
+      const result = await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+    })
+
+    it("should return failure for missing data field", async () => {
+      mockFetch.mockResolvedValue(createAPIResponse(200, { status: "success" }))
+
+      const result = await client.reviewLease(testLeaseId, { action: "Approve" }, testCorrelationId)
+
+      expect(result.success).toBe(false)
+    })
+  })
+})
+
+// =============================================================================
+// fetchAllAccounts Tests
+// =============================================================================
+
+describe("ISB Client - fetchAllAccounts", () => {
+  const testCorrelationId = "test-accounts-001"
+  const testConfig = {
+    serviceIdentity: TEST_SERVICE_IDENTITY,
+    apiBaseUrl: TEST_API_BASE_URL,
+    jwtSecretPath: TEST_JWT_SECRET_PATH,
+  }
+
+  let client: ReturnType<typeof createISBClient>
+
+  beforeEach(() => {
+    commonBeforeEach()
+    client = createISBClient(testConfig)
+  })
+
+  describe("fetchAllAccounts - Single page", () => {
+    it("should return all accounts from a single page", async () => {
+      const mockAccounts: ISBAccountRecord[] = [
+        { awsAccountId: "111111111111", name: "Account 1", status: "Active" },
+        { awsAccountId: "222222222222", name: "Account 2", status: "Active" },
+      ]
+
+      mockFetch.mockResolvedValue(
+        createAPIResponse(200, {
+          status: "success",
+          data: { accounts: mockAccounts, nextPageIdentifier: null },
+        }),
+      )
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual(mockAccounts)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(url).toBe(`${TEST_API_BASE_URL}/accounts`)
+      expect((options as RequestInit).method).toBe("GET")
+    })
+
+    it("should return empty array when no accounts", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(200, {
+          status: "success",
+          data: { accounts: [], nextPageIdentifier: null },
+        }),
+      )
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual([])
+    })
+  })
+
+  describe("fetchAllAccounts - Pagination", () => {
+    it("should fetch multiple pages until nextPageIdentifier is null", async () => {
+      const page1Accounts: ISBAccountRecord[] = [
+        { awsAccountId: "111111111111", name: "Account 1" },
+        { awsAccountId: "222222222222", name: "Account 2" },
+      ]
+      const page2Accounts: ISBAccountRecord[] = [
+        { awsAccountId: "333333333333", name: "Account 3" },
+      ]
+
+      mockFetch
+        .mockResolvedValueOnce(
+          createAPIResponse(200, {
+            status: "success",
+            data: { accounts: page1Accounts, nextPageIdentifier: "cursor-abc" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          createAPIResponse(200, {
+            status: "success",
+            data: { accounts: page2Accounts, nextPageIdentifier: null },
+          }),
+        )
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual([...page1Accounts, ...page2Accounts])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+
+      // Verify second call includes the cursor
+      const [url2] = mockFetch.mock.calls[1]
+      expect(url2).toBe(`${TEST_API_BASE_URL}/accounts?nextPageIdentifier=cursor-abc`)
+    })
+
+    it("should respect maxPages option", async () => {
+      const pageAccounts: ISBAccountRecord[] = [
+        { awsAccountId: "111111111111", name: "Account 1" },
+      ]
+
+      // Return a next page cursor on every response
+      mockFetch.mockResolvedValue(
+        createAPIResponse(200, {
+          status: "success",
+          data: { accounts: pageAccounts, nextPageIdentifier: "always-more" },
+        }),
+      )
+
+      const result = await client.fetchAllAccounts(testCorrelationId, { maxPages: 3 })
+
+      expect(result).toHaveLength(3) // 1 account per page * 3 pages
+      expect(mockFetch).toHaveBeenCalledTimes(3)
+    })
+
+    it("should default maxPages to 100", async () => {
+      // Verify it doesn't call more than 100 pages (mock returns cursor forever)
+      const pageAccounts: ISBAccountRecord[] = [{ awsAccountId: "111111111111" }]
+
+      mockFetch.mockResolvedValue(
+        createAPIResponse(200, {
+          status: "success",
+          data: { accounts: pageAccounts, nextPageIdentifier: "infinite" },
+        }),
+      )
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toHaveLength(100)
+      expect(mockFetch).toHaveBeenCalledTimes(100)
+    })
+  })
+
+  describe("fetchAllAccounts - Error handling", () => {
+    it("should return empty array when API is not configured", async () => {
+      const unconfiguredClient = createISBClient({ serviceIdentity: TEST_SERVICE_IDENTITY })
+      const result = await unconfiguredClient.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual([])
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it("should return partial results when a page fails with server error", async () => {
+      const page1Accounts: ISBAccountRecord[] = [
+        { awsAccountId: "111111111111", name: "Account 1" },
+      ]
+
+      mockFetch
+        .mockResolvedValueOnce(
+          createAPIResponse(200, {
+            status: "success",
+            data: { accounts: page1Accounts, nextPageIdentifier: "cursor-abc" },
+          }),
+        )
+        .mockResolvedValueOnce(createAPIResponse(500, { status: "error", message: "Server error" }))
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual(page1Accounts) // Returns what we got from page 1
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    })
+
+    it("should return partial results when a page fails with network error", async () => {
+      const page1Accounts: ISBAccountRecord[] = [
+        { awsAccountId: "111111111111", name: "Account 1" },
+      ]
+
+      mockFetch
+        .mockResolvedValueOnce(
+          createAPIResponse(200, {
+            status: "success",
+            data: { accounts: page1Accounts, nextPageIdentifier: "cursor-abc" },
+          }),
+        )
+        .mockRejectedValueOnce(new Error("Network error"))
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual(page1Accounts)
+    })
+
+    it("should return empty array when first page returns server error", async () => {
+      mockFetch.mockResolvedValue(createAPIResponse(500, { status: "error", message: "Server error" }))
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual([])
+    })
+
+    it("should return empty array when first page returns JSend fail", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(200, { status: "fail", message: "Validation error" }),
+      )
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual([])
+    })
+
+    it("should return partial results when a page returns JSend non-success", async () => {
+      const page1Accounts: ISBAccountRecord[] = [
+        { awsAccountId: "111111111111", name: "Account 1" },
+      ]
+
+      mockFetch
+        .mockResolvedValueOnce(
+          createAPIResponse(200, {
+            status: "success",
+            data: { accounts: page1Accounts, nextPageIdentifier: "cursor-abc" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          createAPIResponse(200, { status: "fail", message: "Something went wrong" }),
+        )
+
+      const result = await client.fetchAllAccounts(testCorrelationId)
+
+      expect(result).toEqual(page1Accounts)
+    })
+  })
+})
+
+// =============================================================================
+// registerAccount Tests
+// =============================================================================
+
+describe("ISB Client - registerAccount", () => {
+  const testCorrelationId = "test-register-001"
+  const testConfig = {
+    serviceIdentity: TEST_SERVICE_IDENTITY,
+    apiBaseUrl: TEST_API_BASE_URL,
+    jwtSecretPath: TEST_JWT_SECRET_PATH,
+  }
+
+  let client: ReturnType<typeof createISBClient>
+
+  beforeEach(() => {
+    commonBeforeEach()
+    client = createISBClient(testConfig)
+  })
+
+  describe("registerAccount - Success cases", () => {
+    it("should return success result when registering an account", async () => {
+      const mockAccount: ISBAccountRecord = {
+        awsAccountId: "123456789012",
+        name: "New Sandbox",
+        email: "sandbox@example.gov.uk",
+        status: "Available",
+      }
+
+      const mockResponse: JSendResponse<ISBAccountRecord> = {
+        status: "success",
+        data: mockAccount,
+      }
+
+      mockFetch.mockResolvedValue(createAPIResponse(201, mockResponse))
+
+      const result = await client.registerAccount(
+        { awsAccountId: "123456789012", name: "New Sandbox", email: "sandbox@example.gov.uk" },
+        testCorrelationId,
+      )
+
+      expect(result).toEqual({ success: true, data: mockAccount, statusCode: 201 })
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(url).toBe(`${TEST_API_BASE_URL}/accounts`)
+      expect((options as RequestInit).method).toBe("POST")
+
+      const body = JSON.parse((options as RequestInit).body as string)
+      expect(body).toEqual({
+        awsAccountId: "123456789012",
+        name: "New Sandbox",
+        email: "sandbox@example.gov.uk",
+      })
+    })
+
+    it("should work with minimal fields", async () => {
+      const mockAccount: ISBAccountRecord = {
+        awsAccountId: "123456789012",
+        status: "Available",
+      }
+
+      mockFetch.mockResolvedValue(
+        createAPIResponse(201, { status: "success", data: mockAccount }),
+      )
+
+      const result = await client.registerAccount(
+        { awsAccountId: "123456789012" },
+        testCorrelationId,
+      )
+
+      expect(result).toEqual({ success: true, data: mockAccount, statusCode: 201 })
+    })
+  })
+
+  describe("registerAccount - Error handling", () => {
+    it("should return failure for 400 response", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(400, { status: "fail", message: "Account already registered" }),
+      )
+
+      const result = await client.registerAccount(
+        { awsAccountId: "123456789012" },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Account already registered")
+        expect(result.statusCode).toBe(400)
+      }
+    })
+
+    it("should return failure for 500 response", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(500, { status: "error", message: "Internal server error" }),
+      )
+
+      const result = await client.registerAccount(
+        { awsAccountId: "123456789012" },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.statusCode).toBe(500)
+      }
+    })
+
+    it("should return failure for network error", async () => {
+      mockFetch.mockRejectedValue(new Error("Connection refused"))
+
+      const result = await client.registerAccount(
+        { awsAccountId: "123456789012" },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Connection refused")
+        expect(result.statusCode).toBe(0)
+      }
+    })
+
+    it("should return failure when API is not configured", async () => {
+      const unconfiguredClient = createISBClient({ serviceIdentity: TEST_SERVICE_IDENTITY })
+      const result = await unconfiguredClient.registerAccount(
+        { awsAccountId: "123456789012" },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("ISB API not configured")
+      }
+    })
+  })
+
+  describe("registerAccount - Input validation", () => {
+    it("should return failure for empty awsAccountId", async () => {
+      const result = await client.registerAccount(
+        { awsAccountId: "" },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Invalid awsAccountId")
+      }
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it("should return failure for whitespace-only awsAccountId", async () => {
+      const result = await client.registerAccount(
+        { awsAccountId: "   " },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error).toBe("Invalid awsAccountId")
+      }
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("registerAccount - JSend response handling", () => {
+    it("should return failure for JSend fail status", async () => {
+      mockFetch.mockResolvedValue(
+        createAPIResponse(200, { status: "fail", message: "Validation failed" }),
+      )
+
+      const result = await client.registerAccount(
+        { awsAccountId: "123456789012" },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
+    })
+
+    it("should return failure for missing data field", async () => {
+      mockFetch.mockResolvedValue(createAPIResponse(200, { status: "success" }))
+
+      const result = await client.registerAccount(
+        { awsAccountId: "123456789012" },
+        testCorrelationId,
+      )
+
+      expect(result.success).toBe(false)
     })
   })
 })

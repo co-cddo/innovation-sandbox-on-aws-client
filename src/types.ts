@@ -27,6 +27,19 @@ export interface ISBClient {
   fetchLeaseByKey(userEmail: string, uuid: string, correlationId: string): Promise<ISBLeaseRecord | null>
   fetchAccount(awsAccountId: string, correlationId: string): Promise<ISBAccountRecord | null>
   fetchTemplate(templateName: string, correlationId: string): Promise<ISBTemplateRecord | null>
+  reviewLease(
+    leaseId: string,
+    review: ISBReviewLeaseRequest,
+    correlationId: string,
+  ): Promise<ISBResult<ISBReviewLeaseResponse>>
+  fetchAllAccounts(
+    correlationId: string,
+    options?: { maxPages?: number },
+  ): Promise<ISBAccountRecord[]>
+  registerAccount(
+    account: ISBRegisterAccountRequest,
+    correlationId: string,
+  ): Promise<ISBResult<ISBAccountRecord>>
   resetTokenCache(): void
 }
 
@@ -84,4 +97,46 @@ export interface JSendResponse<T> {
   status: "success" | "fail" | "error"
   data?: T
   message?: string
+}
+
+/**
+ * Result type for write operations.
+ * Reads continue returning T | null for graceful degradation;
+ * writes return an explicit success/failure discriminated union.
+ */
+export type ISBResult<T> =
+  | { success: true; data: T; statusCode: number }
+  | { success: false; error: string; statusCode: number }
+
+/**
+ * Request body for POST /leases/{id}/review
+ */
+export interface ISBReviewLeaseRequest {
+  action: "Approve" | "Deny"
+  approverEmail?: string
+}
+
+/**
+ * Response body from POST /leases/{id}/review
+ */
+export interface ISBReviewLeaseResponse {
+  leaseId: string
+  status: string
+}
+
+/**
+ * Paginated response from GET /accounts
+ */
+export interface ISBAccountsPage {
+  accounts: ISBAccountRecord[]
+  nextPageIdentifier: string | null
+}
+
+/**
+ * Request body for POST /accounts (register a new account)
+ */
+export interface ISBRegisterAccountRequest {
+  awsAccountId: string
+  name?: string
+  email?: string
 }

@@ -7,6 +7,8 @@ import type {
   ISBTemplateRecord,
   ISBLogger,
   JSendResponse,
+  ISBResult,
+  ISBReviewLeaseResponse,
 } from "./types.js"
 import { signJwt } from "./jwt.js"
 import { constructLeaseId } from "./lease-id.js"
@@ -86,16 +88,19 @@ export function createISBClient(config: ISBClientConfig): ISBClient {
     correlationId: string,
     jwtSecretPath: string,
     timeoutMs: number,
+    method: string = "GET",
+    body?: unknown,
   ): Promise<Response> {
     const token = await getISBToken(jwtSecretPath)
 
     const response = await fetch(url, {
-      method: "GET",
+      method,
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "X-Correlation-Id": correlationId,
       },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(timeoutMs),
     })
 
@@ -195,6 +200,167 @@ export function createISBClient(config: ISBClientConfig): ISBClient {
     }
   }
 
+  // Internal: write endpoint handler — returns ISBResult<T> with explicit success/failure
+  async function mutateISBEndpoint<T>(
+    method: string,
+    path: string,
+    correlationId: string,
+    body?: unknown,
+    logContext?: Record<string, unknown>,
+  ): Promise<ISBResult<T>> {
+    const resolved = resolveConfig(correlationId)
+    if (!resolved) {
+      return { success: false, error: "ISB API not configured", statusCode: 0 }
+    }
+
+    const startTime = Date.now()
+
+    try {
+      logger.debug(`Calling ISB ${method} ${path}`, {
+        correlationId,
+        ...logContext,
+      })
+
+      const url = `${resolved.apiBaseUrl}${path}`
+      const response = await fetchFromISBAPI(
+        url,
+        correlationId,
+        resolved.jwtSecretPath,
+        resolved.timeoutMs,
+        method,
+        body,
+      )
+      const latencyMs = Date.now() - startTime
+
+      const json = (await response.json()) as JSendResponse<T>
+
+      if (!response.ok || json.status !== "success" || !json.data) {
+        const errorMessage = json.message ?? `HTTP ${response.status}`
+        logger.warn(`ISB ${method} ${path} failed`, {
+          correlationId,
+          latencyMs,
+          statusCode: response.status,
+          jsendStatus: json.status,
+          message: errorMessage,
+        })
+        return { success: false, error: errorMessage, statusCode: response.status }
+      }
+
+      logger.debug(`ISB ${method} ${path} succeeded`, {
+        correlationId,
+        latencyMs,
+        ...logContext,
+      })
+
+      return { success: true, data: json.data, statusCode: response.status }
+    } catch (error) {
+      const latencyMs = Date.now() - startTime
+      const isErrorLike = error instanceof Error || (error != null && typeof (error as { message?: unknown }).message === "string")
+      const errorMessage = isErrorLike ? (error as { message: string }).message : "Unknown error"
+      const errorType = error instanceof Error ? error.name : "Unknown"
+
+      logger.warn(`ISB ${method} ${path} request error`, {
+        correlationId,
+        latencyMs,
+        errorType,
+        errorMessage,
+      })
+      return { success: false, error: errorMessage, statusCode: 0 }
+    }
+  }
+
+  // Internal: fetch a paginated list endpoint
+  async function fetchPaginatedList<T>(
+    endpoint: string,
+    dataKey: string,
+    correlationId: string,
+    maxPages: number,
+    logContext?: Record<string, unknown>,
+  ): Promise<T[]> {
+    const resolved = resolveConfig(correlationId)
+    if (!resolved) return []
+
+    const allItems: T[] = []
+    let nextPageIdentifier: string | null = null
+    let page = 0
+
+    do {
+      page++
+      const startTime = Date.now()
+
+      try {
+        const params = new URLSearchParams()
+        if (nextPageIdentifier) {
+          params.set("nextPageIdentifier", nextPageIdentifier)
+        }
+        const qs = params.toString()
+        const url = `${resolved.apiBaseUrl}${endpoint}${qs ? `?${qs}` : ""}`
+
+        logger.debug(`Calling ISB ${endpoint} API (page ${page})`, {
+          correlationId,
+          page,
+          ...logContext,
+        })
+
+        const response = await fetchFromISBAPI(
+          url,
+          correlationId,
+          resolved.jwtSecretPath,
+          resolved.timeoutMs,
+        )
+        const latencyMs = Date.now() - startTime
+
+        if (!response.ok) {
+          logger.warn(`ISB ${endpoint} API returned ${response.status} on page ${page}`, {
+            correlationId,
+            latencyMs,
+            statusCode: response.status,
+            page,
+          })
+          break
+        }
+
+        const json = (await response.json()) as JSendResponse<Record<string, unknown>>
+
+        if (json.status !== "success" || !json.data) {
+          logger.warn(`ISB ${endpoint} API returned non-success JSend on page ${page}`, {
+            correlationId,
+            latencyMs,
+            jsendStatus: json.status,
+            page,
+          })
+          break
+        }
+
+        const items = json.data[dataKey]
+        if (Array.isArray(items)) {
+          allItems.push(...(items as T[]))
+        }
+
+        nextPageIdentifier = (json.data.nextPageIdentifier as string) ?? null
+
+        logger.debug(`Fetched page ${page} from ISB ${endpoint} API`, {
+          correlationId,
+          latencyMs,
+          itemCount: Array.isArray(items) ? items.length : 0,
+          hasMore: nextPageIdentifier !== null,
+        })
+      } catch (error) {
+        const latencyMs = Date.now() - startTime
+        logger.warn(`ISB ${endpoint} API request error on page ${page}`, {
+          correlationId,
+          latencyMs,
+          errorType: error instanceof Error ? error.name : "Unknown",
+          errorMessage: error instanceof Error ? error.message : "Unknown error",
+          page,
+        })
+        break
+      }
+    } while (nextPageIdentifier && page < maxPages)
+
+    return allItems
+  }
+
   // Return the ISBClient object
   return {
     async fetchLease(leaseId, correlationId) {
@@ -230,6 +396,45 @@ export function createISBClient(config: ISBClientConfig): ISBClient {
         return null
       }
       return fetchFromISBEndpoint<ISBTemplateRecord>("/leaseTemplates", templateName, correlationId, { templateName })
+    },
+
+    async reviewLease(leaseId, review, correlationId): Promise<ISBResult<ISBReviewLeaseResponse>> {
+      if (!leaseId?.trim()) {
+        return { success: false, error: "Invalid leaseId", statusCode: 0 }
+      }
+      if (!review?.action) {
+        return { success: false, error: "Invalid review action", statusCode: 0 }
+      }
+      return mutateISBEndpoint<ISBReviewLeaseResponse>(
+        "POST",
+        `/leases/${encodeURIComponent(leaseId)}/review`,
+        correlationId,
+        review,
+        { leaseIdPrefix: leaseId.substring(0, 8) + "...", action: review.action },
+      )
+    },
+
+    async fetchAllAccounts(correlationId, options): Promise<ISBAccountRecord[]> {
+      const maxPages = options?.maxPages ?? 100
+      return fetchPaginatedList<ISBAccountRecord>(
+        "/accounts",
+        "accounts",
+        correlationId,
+        maxPages,
+      )
+    },
+
+    async registerAccount(account, correlationId): Promise<ISBResult<ISBAccountRecord>> {
+      if (!account?.awsAccountId?.trim()) {
+        return { success: false, error: "Invalid awsAccountId", statusCode: 0 }
+      }
+      return mutateISBEndpoint<ISBAccountRecord>(
+        "POST",
+        "/accounts",
+        correlationId,
+        account,
+        { awsAccountId: account.awsAccountId },
+      )
     },
 
     resetTokenCache() {
