@@ -1,6 +1,6 @@
 {
   "name": "@co-cddo/isb-client",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "ISB API client for Innovation Sandbox on AWS",
   "type": "module",
   "main": "./dist/index.js",

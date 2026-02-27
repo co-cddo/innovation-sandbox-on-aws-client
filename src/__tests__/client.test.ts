@@ -1185,7 +1185,7 @@ describe("ISB Client - fetchAllAccounts", () => {
       mockFetch.mockResolvedValue(
         createAPIResponse(200, {
           status: "success",
-          data: { accounts: mockAccounts, nextPageIdentifier: null },
+          data: { result: mockAccounts, nextPageIdentifier: null },
         }),
       )
 
@@ -1203,7 +1203,7 @@ describe("ISB Client - fetchAllAccounts", () => {
       mockFetch.mockResolvedValue(
         createAPIResponse(200, {
           status: "success",
-          data: { accounts: [], nextPageIdentifier: null },
+          data: { result: [], nextPageIdentifier: null },
         }),
       )
 
@@ -1227,13 +1227,13 @@ describe("ISB Client - fetchAllAccounts", () => {
         .mockResolvedValueOnce(
           createAPIResponse(200, {
             status: "success",
-            data: { accounts: page1Accounts, nextPageIdentifier: "cursor-abc" },
+            data: { result: page1Accounts, nextPageIdentifier: "cursor-abc" },
           }),
         )
         .mockResolvedValueOnce(
           createAPIResponse(200, {
             status: "success",
-            data: { accounts: page2Accounts, nextPageIdentifier: null },
+            data: { result: page2Accounts, nextPageIdentifier: null },
           }),
         )
 
@@ -1256,7 +1256,7 @@ describe("ISB Client - fetchAllAccounts", () => {
       mockFetch.mockResolvedValue(
         createAPIResponse(200, {
           status: "success",
-          data: { accounts: pageAccounts, nextPageIdentifier: "always-more" },
+          data: { result: pageAccounts, nextPageIdentifier: "always-more" },
         }),
       )
 
@@ -1273,7 +1273,7 @@ describe("ISB Client - fetchAllAccounts", () => {
       mockFetch.mockResolvedValue(
         createAPIResponse(200, {
           status: "success",
-          data: { accounts: pageAccounts, nextPageIdentifier: "infinite" },
+          data: { result: pageAccounts, nextPageIdentifier: "infinite" },
         }),
       )
 
@@ -1302,7 +1302,7 @@ describe("ISB Client - fetchAllAccounts", () => {
         .mockResolvedValueOnce(
           createAPIResponse(200, {
             status: "success",
-            data: { accounts: page1Accounts, nextPageIdentifier: "cursor-abc" },
+            data: { result: page1Accounts, nextPageIdentifier: "cursor-abc" },
           }),
         )
         .mockResolvedValueOnce(createAPIResponse(500, { status: "error", message: "Server error" }))
@@ -1322,7 +1322,7 @@ describe("ISB Client - fetchAllAccounts", () => {
         .mockResolvedValueOnce(
           createAPIResponse(200, {
             status: "success",
-            data: { accounts: page1Accounts, nextPageIdentifier: "cursor-abc" },
+            data: { result: page1Accounts, nextPageIdentifier: "cursor-abc" },
           }),
         )
         .mockRejectedValueOnce(new Error("Network error"))
@@ -1359,7 +1359,7 @@ describe("ISB Client - fetchAllAccounts", () => {
         .mockResolvedValueOnce(
           createAPIResponse(200, {
             status: "success",
-            data: { accounts: page1Accounts, nextPageIdentifier: "cursor-abc" },
+            data: { result: page1Accounts, nextPageIdentifier: "cursor-abc" },
           }),
         )
         .mockResolvedValueOnce(

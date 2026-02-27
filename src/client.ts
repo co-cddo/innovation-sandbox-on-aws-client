@@ -418,7 +418,7 @@ export function createISBClient(config: ISBClientConfig): ISBClient {
       const maxPages = options?.maxPages ?? 100
       return fetchPaginatedList<ISBAccountRecord>(
         "/accounts",
-        "accounts",
+        "result",
         correlationId,
         maxPages,
       )

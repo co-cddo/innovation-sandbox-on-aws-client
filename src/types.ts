@@ -128,7 +128,7 @@ export interface ISBReviewLeaseResponse {
  * Paginated response from GET /accounts
  */
 export interface ISBAccountsPage {
-  accounts: ISBAccountRecord[]
+  result: ISBAccountRecord[]
   nextPageIdentifier: string | null
 }
 
