@@ -113,6 +113,7 @@ export type ISBResult<T> =
  */
 export interface ISBReviewLeaseRequest {
   action: "Approve" | "Deny"
+  approverEmail?: string
 }
 
 /**
