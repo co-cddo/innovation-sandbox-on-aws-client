@@ -117,7 +117,7 @@ describe("ISB Client", () => {
 
       // Verify the fetch was called with correct URL and headers
       const [url, options] = mockFetch.mock.calls[0]
-      expect(url).toBe(`${TEST_API_BASE_URL}/leases/${encodeURIComponent(leaseId)}`)
+      expect(url).toBe(`${TEST_API_BASE_URL}/leases/${leaseId}`)
       expect((options as RequestInit).method).toBe("GET")
       expect(((options as RequestInit).headers as Record<string, string>)["Authorization"]).toMatch(/^Bearer /)
       expect(((options as RequestInit).headers as Record<string, string>)["Content-Type"]).toBe("application/json")
@@ -957,7 +957,7 @@ describe("ISB Client - reviewLease", () => {
       expect(mockFetch).toHaveBeenCalledTimes(1)
 
       const [url, options] = mockFetch.mock.calls[0]
-      expect(url).toBe(`${TEST_API_BASE_URL}/leases/${encodeURIComponent(testLeaseId)}/review`)
+      expect(url).toBe(`${TEST_API_BASE_URL}/leases/${testLeaseId}/review`)
       expect((options as RequestInit).method).toBe("POST")
       expect(((options as RequestInit).headers as Record<string, string>)["Authorization"]).toMatch(/^Bearer /)
       expect(((options as RequestInit).headers as Record<string, string>)["X-Correlation-Id"]).toBe(testCorrelationId)

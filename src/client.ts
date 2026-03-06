@@ -130,7 +130,7 @@ export function createISBClient(config: ISBClientConfig): ISBClient {
         ...logContext,
       })
 
-      const url = `${resolved.apiBaseUrl}${endpoint}/${encodeURIComponent(resourceId)}`
+      const url = `${resolved.apiBaseUrl}${endpoint}/${resourceId}`
       const response = await fetchFromISBAPI(url, correlationId, resolved.jwtSecretPath, resolved.timeoutMs)
       const latencyMs = Date.now() - startTime
 
@@ -407,7 +407,7 @@ export function createISBClient(config: ISBClientConfig): ISBClient {
       }
       return mutateISBEndpoint<ISBReviewLeaseResponse>(
         "POST",
-        `/leases/${encodeURIComponent(leaseId)}/review`,
+        `/leases/${leaseId}/review`,
         correlationId,
         review,
         { leaseIdPrefix: leaseId.substring(0, 8) + "...", action: review.action },
